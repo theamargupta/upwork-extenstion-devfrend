@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Upwork Job Extractor</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div id="app">
+    <header id="header">
+      <div class="header-top">
+        <h1>UW Extractor</h1>
+        <div id="score-badge" class="score-badge"></div>
+      </div>
+      <div id="status" class="status"></div>
+    </header>
+
+    <!-- Mode tabs -->
+    <div class="tabs">
+      <button id="tab-single" class="tab active">Single</button>
+      <button id="tab-batch" class="tab">Batch</button>
+      <button id="tab-saved" class="tab">Saved</button>
+      <button id="tab-settings" class="tab">Settings</button>
+    </div>
+
+    <div id="loading" class="loading">
+      <div class="spinner"></div>
+      <p id="loading-text">Extracting job data...</p>
+    </div>
+
+    <div id="error" class="error hidden">
+      <p id="error-msg"></p>
+      <button id="retry-btn" class="btn btn-secondary">Retry</button>
+    </div>
+
+    <!-- Batch mode UI -->
+    <div id="batch-panel" class="hidden">
+      <div class="section batch-config">
+        <h2 class="section-title">Batch Extract</h2>
+        <p class="batch-desc">Auto-clicks through job list, opens each sidebar, extracts data.</p>
+        <div class="batch-controls">
+          <label class="label">Jobs to extract</label>
+          <div class="batch-input-row">
+            <input type="number" id="batch-count" value="10" min="1" max="50" class="batch-input">
+            <button id="batch-start" class="btn btn-accent">Start</button>
+            <button id="batch-stop" class="btn btn-danger hidden">Stop</button>
+          </div>
+        </div>
+        <div id="batch-progress" class="batch-progress hidden">
+          <div class="progress-bar-track">
+            <div id="progress-bar-fill" class="progress-bar-fill"></div>
+          </div>
+          <p id="batch-status" class="batch-status">Starting...</p>
+        </div>
+      </div>
+
+      <!-- Batch results -->
+      <div id="batch-results" class="hidden">
+        <section class="section">
+          <h2 class="section-title">Results</h2>
+          <div id="batch-summary" class="batch-summary"></div>
+          <div id="batch-list" class="batch-list"></div>
+        </section>
+        <div class="actions">
+          <button id="batch-copy-all" class="btn btn-primary">Copy All</button>
+          <button id="batch-copy-claude" class="btn btn-accent">Copy Claude</button>
+          <button id="batch-save-supabase" class="btn btn-supabase hidden">Save All</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Settings / Auth panel -->
+    <div id="settings-panel" class="hidden">
+      <!-- Logged out: show login/signup -->
+      <div id="auth-form">
+        <section class="section">
+          <h2 class="section-title">Account</h2>
+          <p class="batch-desc">Sign in to save and sync your jobs across devices.</p>
+          <div class="auth-tabs">
+            <button id="auth-tab-login" class="auth-tab active">Sign In</button>
+            <button id="auth-tab-signup" class="auth-tab">Sign Up</button>
+          </div>
+          <div class="settings-form">
+            <div class="settings-field">
+              <label class="label" for="auth-email">Email</label>
+              <input type="email" id="auth-email" class="settings-input" placeholder="you@example.com">
+            </div>
+            <div class="settings-field">
+              <label class="label" for="auth-password">Password</label>
+              <input type="password" id="auth-password" class="settings-input" placeholder="Min 6 characters">
+            </div>
+            <button id="auth-submit" class="btn btn-supabase">Sign In</button>
+            <div id="auth-status" class="supa-status"></div>
+          </div>
+        </section>
+      </div>
+
+      <!-- Logged in: show user info -->
+      <div id="auth-profile" class="hidden">
+        <section class="section">
+          <h2 class="section-title">Account</h2>
+          <div class="profile-card">
+            <div class="profile-email" id="profile-email"></div>
+            <div class="profile-meta" id="profile-meta"></div>
+          </div>
+          <button id="auth-logout" class="btn btn-secondary" style="margin-top:10px;width:100%">Sign Out</button>
+        </section>
+      </div>
+    </div>
+
+    <!-- Saved jobs panel -->
+    <div id="saved-panel" class="hidden">
+      <div class="saved-toolbar">
+        <div class="saved-filters">
+          <button id="filter-all" class="filter-btn active" data-filter="all">All</button>
+          <button id="filter-apply" class="filter-btn" data-filter="APPLY">Apply</button>
+          <button id="filter-maybe" class="filter-btn" data-filter="MAYBE">Maybe</button>
+          <button id="filter-skip" class="filter-btn" data-filter="SKIP">Skip</button>
+        </div>
+        <button id="saved-refresh" class="btn btn-secondary btn-sm">Refresh</button>
+      </div>
+      <div id="saved-count" class="saved-count"></div>
+      <div id="saved-list" class="saved-list"></div>
+      <div id="saved-empty" class="saved-empty hidden">
+        <p>No saved jobs yet.</p>
+        <p class="batch-desc">Extract jobs and click Save to see them here.</p>
+      </div>
+    </div>
+
+    <!-- Job detail overlay (shown when clicking a saved job) -->
+    <div id="saved-detail" class="hidden">
+      <button id="saved-back" class="btn btn-secondary btn-sm saved-back-btn">Back to list</button>
+      <div id="saved-detail-content"></div>
+    </div>
+
+    <div id="content" class="content hidden">
+      <!-- Job Title -->
+      <section class="section">
+        <h2 class="section-title">Job Title</h2>
+        <p id="job-title" class="value title-value"></p>
+      </section>
+
+      <!-- Key Metrics -->
+      <section class="section">
+        <h2 class="section-title">Key Metrics</h2>
+        <div class="grid">
+          <div class="metric">
+            <span class="label">Budget</span>
+            <span id="budget" class="value"></span>
+          </div>
+          <div class="metric">
+            <span class="label">Type</span>
+            <span id="budget-type" class="value"></span>
+          </div>
+          <div class="metric">
+            <span class="label">Level</span>
+            <span id="level" class="value"></span>
+          </div>
+          <div class="metric">
+            <span class="label">Posted</span>
+            <span id="posted" class="value"></span>
+          </div>
+          <div class="metric">
+            <span class="label">Location</span>
+            <span id="location" class="value"></span>
+          </div>
+          <div class="metric">
+            <span class="label">Proposals</span>
+            <span id="proposals" class="value"></span>
+          </div>
+          <div class="metric">
+            <span class="label">Project Length</span>
+            <span id="project-length" class="value"></span>
+          </div>
+          <div class="metric">
+            <span class="label">Project Type</span>
+            <span id="project-type" class="value"></span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Activity -->
+      <section class="section">
+        <h2 class="section-title">Activity</h2>
+        <div class="grid">
+          <div class="metric">
+            <span class="label">Last Viewed</span>
+            <span id="last-viewed" class="value"></span>
+          </div>
+          <div class="metric">
+            <span class="label">Interviewing</span>
+            <span id="interviewing" class="value"></span>
+          </div>
+          <div class="metric">
+            <span class="label">Invites Sent</span>
+            <span id="invites-sent" class="value"></span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Bid Range -->
+      <section class="section">
+        <h2 class="section-title">Bid Range</h2>
+        <div class="grid grid-3">
+          <div class="metric">
+            <span class="label">High</span>
+            <span id="bid-high" class="value"></span>
+          </div>
+          <div class="metric">
+            <span class="label">Avg</span>
+            <span id="bid-avg" class="value"></span>
+          </div>
+          <div class="metric">
+            <span class="label">Low</span>
+            <span id="bid-low" class="value"></span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Connects -->
+      <section class="section">
+        <h2 class="section-title">Connects</h2>
+        <div class="grid">
+          <div class="metric">
+            <span class="label">Required</span>
+            <span id="connects-required" class="value"></span>
+          </div>
+          <div class="metric">
+            <span class="label">Available</span>
+            <span id="connects-available" class="value"></span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Skills -->
+      <section class="section">
+        <h2 class="section-title">Skills</h2>
+        <div id="skills" class="skills"></div>
+      </section>
+
+      <!-- Client Info -->
+      <section class="section">
+        <h2 class="section-title">Client Info</h2>
+        <div class="grid">
+          <div class="metric">
+            <span class="label">Payment</span>
+            <span id="client-payment" class="value"></span>
+          </div>
+          <div class="metric">
+            <span class="label">Location</span>
+            <span id="client-location" class="value"></span>
+          </div>
+          <div class="metric">
+            <span class="label">Hire Rate</span>
+            <span id="client-hire-rate" class="value"></span>
+          </div>
+          <div class="metric">
+            <span class="label">Open Jobs</span>
+            <span id="client-open-jobs" class="value"></span>
+          </div>
+          <div class="metric">
+            <span class="label">Total Spent</span>
+            <span id="client-total-spent" class="value"></span>
+          </div>
+          <div class="metric">
+            <span class="label">Member Since</span>
+            <span id="client-member-since" class="value"></span>
+          </div>
+          <div class="metric">
+            <span class="label">Rating</span>
+            <span id="client-rating" class="value"></span>
+          </div>
+          <div class="metric">
+            <span class="label">Reviews</span>
+            <span id="client-reviews" class="value"></span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Description -->
+      <section class="section">
+        <h2 class="section-title">Description</h2>
+        <div id="description" class="description"></div>
+      </section>
+
+      <!-- Actions -->
+      <div class="actions">
+        <button id="copy-all" class="btn btn-primary">Copy All</button>
+        <button id="copy-claude" class="btn btn-accent">Copy Claude</button>
+        <button id="save-supabase" class="btn btn-supabase hidden">Save</button>
+      </div>
+    </div>
+
+    <!-- Toast -->
+    <div id="toast" class="toast hidden">Copied!</div>
+  </div>
+
+  <script src="config.js"></script>
+  <script src="supabase.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

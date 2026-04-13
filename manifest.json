@@ -1,0 +1,38 @@
+{
+  "manifest_version": 3,
+  "name": "Upwork Job Extractor",
+  "version": "1.1.0",
+  "description": "Extract and score Upwork job postings with one click. Copy formatted data for proposals.",
+  "permissions": ["activeTab", "scripting", "storage", "sidePanel"],
+  "action": {
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "side_panel": {
+    "default_path": "popup.html"
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.upwork.com/jobs/*",
+        "https://www.upwork.com/freelance-jobs/*",
+        "https://www.upwork.com/nx/find-work/*",
+        "https://www.upwork.com/nx/search/jobs/*",
+        "https://www.upwork.com/ab/proposals/job/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "background": {
+    "service_worker": "background.js"
+  }
+}

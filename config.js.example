@@ -1,0 +1,5 @@
+// --- EDIT THESE VALUES ---
+// Get them from: Supabase Dashboard > Settings > API
+
+const SUPABASE_URL = '';
+const SUPABASE_ANON_KEY = '';
