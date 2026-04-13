@@ -178,11 +178,11 @@ const Supabase = {
 
   async upsertJob(data) {
     const row = this.toRow(data);
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/upwork_jobs`, {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/upwork_jobs?on_conflict=user_id,job_uid`, {
       method: 'POST',
       headers: {
         ...await this._headers(true),
-        'Prefer': 'resolution=merge-duplicates,return=minimal'
+        'Prefer': 'resolution=ignore-duplicates,return=minimal'
       },
       body: JSON.stringify(row)
     });
@@ -195,11 +195,11 @@ const Supabase = {
 
   async upsertJobs(jobs) {
     const rows = jobs.map(j => this.toRow(j));
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/upwork_jobs`, {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/upwork_jobs?on_conflict=user_id,job_uid`, {
       method: 'POST',
       headers: {
         ...await this._headers(true),
-        'Prefer': 'resolution=merge-duplicates,return=minimal'
+        'Prefer': 'resolution=ignore-duplicates,return=minimal'
       },
       body: JSON.stringify(rows)
     });
