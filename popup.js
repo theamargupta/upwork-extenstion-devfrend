@@ -684,6 +684,10 @@
     btn.addEventListener('click', () => loadSavedJobs(btn.dataset.filter));
   });
   $('saved-refresh').addEventListener('click', () => loadSavedJobs(savedFilter));
+  $('saved-copy-json').addEventListener('click', () => {
+    if (!savedJobs.length) return showToast('No jobs to copy');
+    copyToClipboard(JSON.stringify(savedJobs, null, 2));
+  });
   $('saved-back').addEventListener('click', () => {
     $('saved-detail').classList.add('hidden');
     $('saved-panel').classList.remove('hidden');
