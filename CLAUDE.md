@@ -1,6 +1,12 @@
 # Upwork Job Extractor
 
 ## Overview
+## Nested Context
+- `.claude/commands/` — slash commands for extension workflows
+- `.claude/agents/` — selector-fallback, MV3, Supabase REST reviewers
+
+Related docs: `AGENTS.md` (platform rules), `supabase-schema.sql` (DB source of truth).
+
 Chrome extension (Manifest V3) that extracts and scores Upwork job postings. Single job extraction, batch mode (1-50 jobs), intelligent scoring (1-10), copy as markdown/Claude format, and Supabase sync with deduplication.
 
 ## Tech Stack
