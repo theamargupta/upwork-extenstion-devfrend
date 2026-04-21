@@ -8,6 +8,13 @@
     shortest-path search (best-matches first, NOT `/nx/search/`), HARD STOP on
     Apply-page qualification warnings, no-script-click on Cloudflare Turnstile,
     and "by hook or crook" application posture with Sathi MCP as profile source.
+    `upwork_apply_to_job` now supports **both hourly and fixed-price** natively
+    (auto-detects via milestone-description input). Pass `milestones` + `duration`
+    for fixed-price, skip them for hourly. The manual "Fixed-price apply runbook"
+    in the command file is kept as a DOM-debug reference for selector-drift
+    triage, not the primary path. Extension logic lives in
+    `src/commands/apply-page-script.js` (spawn-then-fill milestone pattern
+    handles the description re-render clobber).
 - `.claude/agents/` — selector-fallback, MV3, Supabase REST reviewers
 
 Related docs: `AGENTS.md` (platform rules), `supabase-schema.sql` (DB source of truth).

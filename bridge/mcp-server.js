@@ -134,16 +134,32 @@ const TOOLS = [
   {
     name: 'upwork_apply_to_job',
     description:
-      'High-level: navigate to /nx/proposals/job/~<id>/apply/, hard-stop on qualification warning, fill cover letter, set rate-increase, pick N portfolio + M certs, leave boost untouched. NEVER clicks Send. Use this instead of orchestrating click/fill/query yourself — agent stays in brain mode, extension handles the deterministic DOM dance.',
+      'High-level: navigate to /nx/proposals/job/~<id>/apply/, hard-stop on qualification warning, fill cover letter, set rate-increase (hourly) OR milestones + duration (fixed-price), pick N portfolio + M certs, leave boost untouched. NEVER clicks Send. Auto-detects hourly vs fixed-price via the milestone-description input. For fixed-price jobs pass `milestones` (and optionally `duration`); `rateIncrease` is ignored on fixed-price. Agent stays in brain mode, extension handles the deterministic DOM dance (including the milestone-description re-render gotcha).',
     inputSchema: {
       type: 'object',
       properties: {
         jobId: { type: 'string', description: 'Upwork job id, e.g. "~022046167505190936654" (with or without leading ~)' },
         coverLetter: { type: 'string', description: 'Pre-drafted cover letter text. Audit it via the cover-letter self-check BEFORE calling this tool.' },
-        rateIncrease: { type: 'string', description: 'Dropdown option to pick (default "Never"). Pass null/empty to skip.', default: 'Never' },
+        rateIncrease: { type: 'string', description: 'HOURLY only — dropdown option to pick (default "Never"). Pass null/empty to skip. Ignored on fixed-price.', default: 'Never' },
         portfolioCount: { type: 'number', description: 'How many portfolio items to highlight (default 2)', default: 2 },
         certCount: { type: 'number', description: 'How many certificates to highlight (default 2)', default: 2 },
-        skipBoost: { type: 'boolean', description: 'Default true — never burn extra Connects on boost', default: true }
+        skipBoost: { type: 'boolean', description: 'Default true — never burn extra Connects on boost', default: true },
+        milestones: {
+          type: 'array',
+          description: 'FIXED-PRICE only — ordered list of milestones. Tool spawns the required "+ Add milestone" rows and fills each. Sum of amounts should equal the cover-letter-quoted total.',
+          items: {
+            type: 'object',
+            properties: {
+              description: { type: 'string', description: 'Milestone description (what gets delivered in this milestone)' },
+              amount: { type: 'number', description: 'Milestone amount in USD (no currency symbol)' }
+            },
+            required: ['description', 'amount']
+          }
+        },
+        duration: {
+          type: 'string',
+          description: 'FIXED-PRICE only — project duration bucket. Must match one of: "Less than 1 month", "1 to 3 months", "3 to 6 months", "More than 6 months". Typically match the client\'s own "Project length" on the job details card.'
+        }
       },
       required: ['jobId', 'coverLetter']
     }
