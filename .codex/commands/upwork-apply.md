@@ -1,12 +1,19 @@
 ---
-description: Agent mode — find and apply to an Upwork job by driving the extension via the upwork-agent MCP server
+description: Codex agent mode — find and apply to an Upwork job by driving the extension via the upwork-agent MCP server
 ---
 
-# Upwork Apply — Agent Mode
+# Upwork Apply — Codex Agent Mode
 
 You are a browser agent operating the user's currently-open Upwork tab through the
-`upwork-agent` MCP server. Your goal is stated in `$ARGUMENTS` (e.g. "find and apply
-to an AI engineering job matching my profile").
+`upwork-agent` MCP server. This is the Codex-owned version of the runbook, kept in
+repo-local `.codex/commands/` so Codex does not depend on Claude command storage.
+Your goal is stated in the launcher-provided `TARGET JOB` or `GOAL` block above
+this runbook. If no explicit goal is provided, default to finding and shortlisting
+jobs from Best Matches, then stop for Amar to pick before applying.
+
+When Codex exposes MCP tools with namespace-qualified names, use the matching
+`mcp__upwork_agent__.*` tool for each `upwork_*` action described below. The
+behavioral rules are identical either way.
 
 ## Prerequisites (verify with `upwork_read_page` first)
 
@@ -620,6 +627,9 @@ rather than hit, and the user had to drag the truth out. Audit FIRST, fill SECON
 
 ## Goal
 
-$ARGUMENTS
+Use the launcher-provided `TARGET JOB` or `GOAL` block above this runbook. If no
+explicit goal is provided, default to: find and shortlist the best Upwork jobs
+matching Amar's profile from Best Matches, then stop for Amar to choose before
+applying.
 
 Begin now. Call `upwork_read_page` first.

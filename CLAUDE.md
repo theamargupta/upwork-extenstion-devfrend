@@ -15,7 +15,20 @@
     triage, not the primary path. Extension logic lives in
     `src/commands/apply-page-script.js` (spawn-then-fill milestone pattern
     handles the description re-render clobber).
+  - `upwork_select_highlights` — MCP-callable recovery helper for current apply
+    pages/modals. Enforces 2 portfolio + 2 certificate highlights, removes extras,
+    supports preferred title substrings, commits highlights, and never clicks Send.
 - `.claude/agents/` — selector-fallback, MV3, Supabase REST reviewers
+- `bridge/run-codex-upwork.sh` — one-off launcher that runs the `upwork-apply`
+  runbook via **Codex CLI** instead of Claude Code. It now prefers the Codex-owned
+  runbook at `.codex/commands/upwork-apply.md` and falls back to
+  `.claude/commands/upwork-apply.md`. Prepends a 6-rule memory preamble
+  (yellow-banner HARD STOP, IN/PK + $25/hr filters, no-script Turnstile,
+  best-matches-only, unified hourly+FP tool, no-commit posture) since Codex
+  doesn't inherit Claude's memory dir. Requires `[mcp_servers.upwork-agent]` in
+  `~/.codex/config.toml` (stdio → `bridge/mcp-server.js`). Sathi is HTTP MCP —
+  either skip (paste profile inline) or bridge via `npx mcp-remote`.
+  Usage: `./bridge/run-codex-upwork.sh [<job-url>]`. Logs to `bridge/codex-upwork-*.log`.
 
 Related docs: `AGENTS.md` (platform rules), `supabase-schema.sql` (DB source of truth).
 

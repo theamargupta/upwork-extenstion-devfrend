@@ -6,6 +6,7 @@ import { queryDom } from './query-dom.js';
 import { screenshot } from './screenshot.js';
 import { navigate } from './navigate.js';
 import { applyToJob } from './apply-to-job.js';
+import { selectHighlights } from './select-highlights.js';
 
 export async function executeCommand(cmd) {
   const { type, args = {} } = cmd;
@@ -19,6 +20,7 @@ export async function executeCommand(cmd) {
   if (type === 'screenshot') return screenshot(tab, args);
   if (type === 'query_dom') return queryDom(tab, args);
   if (type === 'apply_to_job') return applyToJob(tab, args);
+  if (type === 'select_highlights') return selectHighlights(tab, args);
 
   throw new Error(`unknown command type: ${type}`);
 }

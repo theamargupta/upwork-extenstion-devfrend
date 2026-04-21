@@ -1,3 +1,4 @@
 config.js
 bridge/node_modules
 run-codex/
+bridge/codex-upwork-*.log

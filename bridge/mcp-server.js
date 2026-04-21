@@ -165,6 +165,29 @@ const TOOLS = [
     }
   },
   {
+    name: 'upwork_select_highlights',
+    description:
+      'Select profile highlights on the current Upwork apply page or open highlights modal. Enforces N portfolio + M certificate highlights, removes extras if needed, optionally prefers specific title substrings, commits the modal, and NEVER clicks Send.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        portfolioCount: { type: 'number', description: 'How many portfolio highlights to keep/select (default 2)', default: 2 },
+        certCount: { type: 'number', description: 'How many certificate highlights to keep/select (default 2)', default: 2 },
+        portfolioTitles: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Optional preferred portfolio title substrings, tried before first available'
+        },
+        certTitles: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Optional preferred certificate title substrings, tried before first available'
+        },
+        commit: { type: 'boolean', description: 'Whether to click Add to highlights after selection (default true)', default: true }
+      }
+    }
+  },
+  {
     name: 'upwork_done',
     description:
       'Signal that the goal is achieved (or can go no further safely). Provide a short summary. After calling this, stop.',
@@ -222,6 +245,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
       case 'upwork_apply_to_job': {
         const res = await runCommand('apply_to_job', args);
+        return textResult(res);
+      }
+      case 'upwork_select_highlights': {
+        const res = await runCommand('select_highlights', args);
         return textResult(res);
       }
       case 'upwork_done': {
