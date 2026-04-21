@@ -1,4 +1,4 @@
-# Upwork Job Extractor
+# Job Extractor
 
 ## Overview
 ## Nested Context
@@ -24,7 +24,7 @@ No build step. Load unpacked in chrome://extensions/ with Developer mode on.
 manifest.json         # MV3 config (v1.1.0)
 content.js            # DOM extraction + batch automation (main logic)
 background.js         # Service worker (side panel, message routing)
-popup.html            # Side panel UI (4 tabs: Single, Batch, Saved, Settings)
+popup.html            # Side panel UI (Extract [Single, Batch], Tools [Capture])
 popup.css             # Dark theme styles
 popup.js              # UI logic (render, copy, tabs, auth, batch results)
 supabase.js           # Custom REST API wrapper (auth + DB operations)

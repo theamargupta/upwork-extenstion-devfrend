@@ -1,4 +1,4 @@
-# Upwork Job Extractor
+# Job Extractor
 
 Chrome extension (Manifest V3) that extracts job data from Upwork pages, scores them, and saves to Supabase. Opens as a side panel so it stays open while you browse.
 

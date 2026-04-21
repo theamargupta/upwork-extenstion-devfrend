@@ -1,8 +1,49 @@
-// Upwork Job Extractor — Content Script
-// Extracts job data from Upwork job pages using multiple fallback selectors.
+// Job Extractor — Content Script
+// Extracts job data from job pages using multiple fallback selectors.
 
 (() => {
   'use strict';
+
+  // --- Shadow-DOM-piercing text walker (used by getPageText fallback) ---
+
+  const BLOCK_TAGS = new Set([
+    'ADDRESS','ARTICLE','ASIDE','BLOCKQUOTE','BR','DD','DIV','DL','DT','FIELDSET',
+    'FIGCAPTION','FIGURE','FOOTER','FORM','H1','H2','H3','H4','H5','H6','HEADER',
+    'HR','LI','MAIN','NAV','OL','P','PRE','SECTION','TABLE','TR','UL'
+  ]);
+  const SKIP_TAGS = new Set(['SCRIPT','STYLE','NOSCRIPT','TEMPLATE','IFRAME','SVG']);
+
+  function deepTextWalk(root) {
+    const parts = [];
+    const win = root.ownerDocument?.defaultView || window;
+
+    function walk(node) {
+      if (!node) return;
+      if (node.nodeType === Node.TEXT_NODE) {
+        const t = node.nodeValue;
+        if (t && t.trim()) parts.push(t.replace(/\s+/g, ' '));
+        return;
+      }
+      if (node.nodeType !== Node.ELEMENT_NODE) return;
+
+      const tag = node.tagName;
+      if (SKIP_TAGS.has(tag)) return;
+
+      let cs;
+      try { cs = win.getComputedStyle(node); } catch { cs = null; }
+      if (cs && (cs.display === 'none' || cs.visibility === 'hidden')) return;
+
+      if (node.shadowRoot) {
+        for (const c of node.shadowRoot.childNodes) walk(c);
+      }
+      for (const c of node.childNodes) walk(c);
+
+      if (BLOCK_TAGS.has(tag)) parts.push('\n');
+    }
+
+    walk(root);
+    return parts.join('');
+  }
 
   // --- Selector helpers ---
 
@@ -400,11 +441,23 @@
     return max;
   }
 
+  function effectiveBudget(data) {
+    // Upwork fills in $35 (sometimes $5-$50) as a placeholder for fixed jobs
+    // where the client didn't state a real budget. In that case, the bid-range
+    // average is a better signal of what freelancers think the job is worth.
+    const raw = parseDollarAmount(data.budget.amount);
+    if (raw > 0 && raw <= 50) {
+      const avg = parseDollarAmount(data.bidRange && data.bidRange.avg);
+      if (avg > raw) return avg;
+    }
+    return raw;
+  }
+
   function calculateScore(data) {
     let score = 5; // Start at midpoint
 
-    // Budget scoring — more granular
-    const budget = parseDollarAmount(data.budget.amount);
+    // Budget scoring — prefer bid-range avg when stated budget is a placeholder
+    const budget = effectiveBudget(data);
     if (budget >= 1000) score += 3;
     else if (budget >= 500) score += 2;
     else if (budget >= 200) score += 1;
@@ -530,10 +583,13 @@
       'article[data-ev-opening_uid]',
     ];
 
+    // Pick the selector that matches the MOST cards (avoids narrow "boosted-only" selectors capping us at 2)
+    let best = [];
     for (const sel of selectors) {
       const els = document.querySelectorAll(sel);
-      if (els.length > 1) return Array.from(els);
+      if (els.length > best.length) best = Array.from(els);
     }
+    if (best.length > 1) return best;
 
     // Last resort: find elements containing job title links
     const titleLinks = document.querySelectorAll(
@@ -610,11 +666,19 @@
     batchStopped = false;
     const results = [];
     const seenUrls = new Set();
+
+    // Auto-skip: UIDs the user has already copied in any session.
+    let alreadyCopied = new Set();
+    try {
+      const { copiedJobUids = [] } = await chrome.storage.local.get('copiedJobUids');
+      alreadyCopied = new Set(copiedJobUids);
+    } catch {}
+
     const cards = getJobListItems();
     const total = Math.min(count, cards.length);
 
     if (total === 0) {
-      return { success: false, error: 'No job cards found on this page. Make sure you are on the Best Matches or Search Results page.' };
+      return { success: false, error: 'No job cards found on this page. Make sure you are on Best Matches, Most Recent, or Search Results.' };
     }
 
     // Send progress update
@@ -632,6 +696,20 @@
         sendProgress(i, total, 'Stopped by user');
         break;
       }
+
+      // Pre-check: read the job UID from the card link before clicking,
+      // so we can skip already-copied jobs without opening their sidebar.
+      const preLink = cards[i].querySelector('a[href*="/jobs/~"], a[href*="/best-matches/details/"]');
+      const preHref = preLink?.href || '';
+      const preUidMatch = preHref.match(/~(\w+)/);
+      const preUid = preUidMatch ? preUidMatch[1] : null;
+
+      if (preUid && alreadyCopied.has(preUid)) {
+        sendProgress(i + 1, total, '(already copied, skipped)');
+        results.push({ success: false, index: i, skipped: true, uid: preUid });
+        continue;
+      }
+
       sendProgress(i + 1, total, 'Opening...');
 
       try {
@@ -688,6 +766,50 @@
       try {
         const data = extractJobData();
         sendResponse({ success: true, data });
+      } catch (err) {
+        sendResponse({ success: false, error: err.message });
+      }
+    }
+
+    if (request.action === 'getPageText') {
+      try {
+        let text = '';
+        let style = null;
+
+        if (request.clean) {
+          const hideSelectors = [
+            'nav', 'footer', 'header', 'aside',
+            '[role="navigation"]', '[role="contentinfo"]', '[role="banner"]',
+            '[aria-label*="footer" i]', '[aria-label*="navigation" i]',
+            '[class*="footer" i]', '[id*="footer" i]',
+            '[data-test*="footer" i]', '[data-qa*="footer" i]',
+            '.site-footer', '.page-footer', '.site-header', '.page-header',
+            'script', 'style', 'noscript'
+          ].join(',');
+          style = document.createElement('style');
+          style.textContent = `${hideSelectors}{display:none !important}`;
+          document.head.appendChild(style);
+          void document.body.offsetHeight; // force layout flush
+        }
+
+        text = document.body.innerText || '';
+
+        // If light-DOM innerText is thin (shadow-DOM-heavy sites like YouTube),
+        // walk the tree including shadow roots.
+        if (text.length < 200) {
+          text = deepTextWalk(document.body);
+        }
+
+        if (style) style.remove();
+
+        text = text.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+
+        sendResponse({
+          success: true,
+          text,
+          title: document.title || '',
+          url: location.href
+        });
       } catch (err) {
         sendResponse({ success: false, error: err.message });
       }

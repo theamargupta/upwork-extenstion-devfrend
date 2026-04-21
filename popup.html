@@ -3,25 +3,33 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Upwork Job Extractor</title>
+  <title>Job Extractor</title>
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
   <div id="app">
     <header id="header">
       <div class="header-top">
-        <h1>UW Extractor</h1>
+        <h1>Job Extractor</h1>
+        <button id="app-debug-btn" class="btn btn-secondary btn-sm" title="Toggle app audit log (every step)">Debug</button>
+        <button id="reload-ext-btn" class="btn btn-secondary btn-sm" title="Reload extension (no need to go to chrome://extensions)">Reload Ext</button>
         <div id="score-badge" class="score-badge"></div>
       </div>
       <div id="status" class="status"></div>
     </header>
 
-    <!-- Mode tabs -->
-    <div class="tabs">
-      <button id="tab-single" class="tab active">Single</button>
-      <button id="tab-batch" class="tab">Batch</button>
-      <button id="tab-saved" class="tab">Saved</button>
-      <button id="tab-settings" class="tab">Settings</button>
+    <!-- Top-level tabs -->
+    <div class="tabs" id="top-tabs">
+      <button class="tab active" data-group="extract">Extract</button>
+      <button class="tab" data-group="tools">Tools</button>
+      <!-- Supabase disabled: Settings tab holds auth; hide until re-enabled.
+      <button class="tab" data-group="settings">Settings</button>
+      -->
+    </div>
+
+    <!-- Sub-tabs (per group) -->
+    <div class="subtabs hidden" data-group="tools">
+      <button class="subtab active" data-sub="capture">Capture</button>
     </div>
 
     <div id="loading" class="loading">
@@ -36,9 +44,26 @@
 
     <!-- Batch mode UI -->
     <div id="batch-panel" class="hidden">
+      <div id="bridge-banner" class="bridge-banner hidden">
+        <strong>Bridge offline.</strong>
+        Start is disabled. In your terminal, run:
+        <code>node bridge/server.js</code>
+        <span id="bridge-banner-detail" class="bridge-banner-detail"></span>
+      </div>
+      <div id="listen-banner" class="bridge-banner hidden">
+        <strong>Listen is off.</strong>
+        Start is disabled. Turn on the <code>Listen</code> toggle so the panel can receive commands from the bridge.
+      </div>
+      <div class="listen-row">
+        <label class="check-row" style="margin:0">
+          <input type="checkbox" id="listen-toggle">
+          <span>Listen</span>
+        </label>
+        <span id="listen-status" class="listen-status">Off</span>
+      </div>
+
       <div class="section batch-config">
         <h2 class="section-title">Batch Extract</h2>
-        <p class="batch-desc">Auto-clicks through job list, opens each sidebar, extracts data.</p>
         <div class="batch-controls">
           <label class="label">Jobs to extract</label>
           <div class="batch-input-row">
@@ -55,6 +80,22 @@
         </div>
       </div>
 
+      <div class="section">
+        <h2 class="section-title">Manual Auto-Apply</h2>
+        <p class="batch-desc">Run Auto-Apply on the current tab. Uses last Pick-Best job when available, otherwise the active tab.</p>
+        <div class="actions" style="gap:6px; flex-wrap:wrap; margin-top:6px">
+          <button id="manual-autoapply" class="btn btn-accent">Run Auto-Apply</button>
+          <select id="manual-autoapply-from" class="settings-input" style="flex:0 0 auto; width:auto; padding:6px 8px; font-size:11px" title="Which step to start from">
+            <option value="navigate">Full flow (navigate → certificate)</option>
+            <option value="apply">Skip navigate — click Apply here</option>
+            <option value="cover" selected>On /apply/ — cover + rate + portfolio + cert</option>
+            <option value="highlight">Only add portfolio highlight</option>
+            <option value="certificate">Only add certificate highlight</option>
+          </select>
+        </div>
+        <p id="manual-autoapply-status" class="batch-status"></p>
+      </div>
+
       <!-- Batch results -->
       <div id="batch-results" class="hidden">
         <section class="section">
@@ -63,10 +104,30 @@
           <div id="batch-list" class="batch-list"></div>
         </section>
         <div class="actions">
-          <button id="batch-copy-all" class="btn btn-primary">Copy All</button>
-          <button id="batch-copy-claude" class="btn btn-accent">Copy Claude</button>
+          <button id="batch-ask-claude" class="btn btn-accent" title="Send full batch to local Claude CLI — Claude picks one best job + drafts cover-letter hook">Pick Best</button>
           <button id="batch-save-supabase" class="btn btn-supabase hidden">Save All</button>
         </div>
+
+        <div id="claude-reply-block" class="hidden">
+          <section class="section">
+            <h2 class="section-title">Claude reply</h2>
+            <p id="claude-reply-status" class="batch-status"></p>
+            <pre id="claude-reply" class="debug-pre"></pre>
+            <div class="actions" style="margin-top:8px; flex-wrap:wrap; gap:6px">
+              <button id="claude-reply-autoapply" class="btn btn-accent btn-sm hidden" title="Run Auto-Apply from the selected step">Auto-Apply</button>
+              <select id="autoapply-from" class="settings-input" style="flex:0 0 auto; width:auto; padding:6px 8px; font-size:11px" title="Which step to start Auto-Apply from">
+                <option value="navigate">Full flow (navigate → submit)</option>
+                <option value="apply">Skip navigate — click Apply on current page</option>
+                <option value="cover">Already on /apply/ — draft + fill cover letter</option>
+                <option value="rate">Only set rate increase to Never</option>
+              </select>
+              <button id="claude-reply-open" class="btn btn-secondary btn-sm hidden" title="Just open the picked job in a new tab">Open job</button>
+              <button id="claude-reply-copy" class="btn btn-secondary btn-sm">Copy reply</button>
+            </div>
+          </section>
+
+        </div>
+
       </div>
     </div>
 
@@ -109,189 +170,70 @@
       </div>
     </div>
 
-    <!-- Saved jobs panel -->
-    <div id="saved-panel" class="hidden">
-      <div class="saved-toolbar">
-        <div class="saved-filters">
-          <button id="filter-all" class="filter-btn active" data-filter="all">All</button>
-          <button id="filter-apply" class="filter-btn" data-filter="APPLY">Apply</button>
-          <button id="filter-maybe" class="filter-btn" data-filter="MAYBE">Maybe</button>
-          <button id="filter-skip" class="filter-btn" data-filter="SKIP">Skip</button>
-        </div>
-        <button id="saved-copy-json" class="btn btn-accent btn-sm">Copy JSON</button>
-        <button id="saved-refresh" class="btn btn-secondary btn-sm">Refresh</button>
+    <!-- Capture panel (Tools > Capture) -->
+    <div id="capture-panel" class="hidden">
+      <div class="section">
+        <h2 class="section-title">Page Capture</h2>
+        <p class="batch-desc">Full-page screenshot + visible text + URL — review, edit, then copy to paste into an LLM.</p>
+        <label class="check-row">
+          <input type="checkbox" id="capture-clean" checked>
+          <span>Clean (strip nav, header, footer)</span>
+        </label>
+        <button id="capture-btn" class="btn btn-accent" style="width:100%;margin-top:8px">Capture Current Page</button>
+        <p id="capture-status" class="batch-status hidden"></p>
       </div>
-      <div id="saved-count" class="saved-count"></div>
-      <div id="saved-list" class="saved-list"></div>
-      <div id="saved-empty" class="saved-empty hidden">
-        <p>No saved jobs yet.</p>
-        <p class="batch-desc">Extract jobs and click Save to see them here.</p>
-      </div>
-    </div>
 
-    <!-- Job detail overlay (shown when clicking a saved job) -->
-    <div id="saved-detail" class="hidden">
-      <button id="saved-back" class="btn btn-secondary btn-sm saved-back-btn">Back to list</button>
-      <div id="saved-detail-content"></div>
-    </div>
+      <div id="capture-result" class="hidden">
+        <section class="section">
+          <h2 class="section-title">Screenshot</h2>
+          <img id="capture-image" class="capture-image" alt="page screenshot">
+        </section>
 
-    <div id="content" class="content hidden">
-      <!-- Job Title -->
-      <section class="section">
-        <h2 class="section-title">Job Title</h2>
-        <p id="job-title" class="value title-value"></p>
-      </section>
+        <section class="section">
+          <h2 class="section-title">Title</h2>
+          <input type="text" id="capture-title" class="settings-input">
+        </section>
 
-      <!-- Key Metrics -->
-      <section class="section">
-        <h2 class="section-title">Key Metrics</h2>
-        <div class="grid">
-          <div class="metric">
-            <span class="label">Budget</span>
-            <span id="budget" class="value"></span>
-          </div>
-          <div class="metric">
-            <span class="label">Type</span>
-            <span id="budget-type" class="value"></span>
-          </div>
-          <div class="metric">
-            <span class="label">Level</span>
-            <span id="level" class="value"></span>
-          </div>
-          <div class="metric">
-            <span class="label">Posted</span>
-            <span id="posted" class="value"></span>
-          </div>
-          <div class="metric">
-            <span class="label">Location</span>
-            <span id="location" class="value"></span>
-          </div>
-          <div class="metric">
-            <span class="label">Proposals</span>
-            <span id="proposals" class="value"></span>
-          </div>
-          <div class="metric">
-            <span class="label">Project Length</span>
-            <span id="project-length" class="value"></span>
-          </div>
-          <div class="metric">
-            <span class="label">Project Type</span>
-            <span id="project-type" class="value"></span>
-          </div>
+        <section class="section">
+          <h2 class="section-title">URL</h2>
+          <input type="text" id="capture-url" class="settings-input" readonly>
+        </section>
+
+        <section class="section">
+          <h2 class="section-title">Page Text (editable)</h2>
+          <textarea id="capture-text" class="capture-textarea" rows="10"></textarea>
+          <p id="capture-char-count" class="batch-status"></p>
+        </section>
+
+        <div class="actions">
+          <button id="capture-copy-all" class="btn btn-accent">Copy Image + Text</button>
+          <button id="capture-copy-text" class="btn btn-primary">Text Only</button>
         </div>
-      </section>
 
-      <!-- Activity -->
-      <section class="section">
-        <h2 class="section-title">Activity</h2>
-        <div class="grid">
-          <div class="metric">
-            <span class="label">Last Viewed</span>
-            <span id="last-viewed" class="value"></span>
-          </div>
-          <div class="metric">
-            <span class="label">Interviewing</span>
-            <span id="interviewing" class="value"></span>
-          </div>
-          <div class="metric">
-            <span class="label">Invites Sent</span>
-            <span id="invites-sent" class="value"></span>
-          </div>
-        </div>
-      </section>
-
-      <!-- Bid Range -->
-      <section class="section">
-        <h2 class="section-title">Bid Range</h2>
-        <div class="grid grid-3">
-          <div class="metric">
-            <span class="label">High</span>
-            <span id="bid-high" class="value"></span>
-          </div>
-          <div class="metric">
-            <span class="label">Avg</span>
-            <span id="bid-avg" class="value"></span>
-          </div>
-          <div class="metric">
-            <span class="label">Low</span>
-            <span id="bid-low" class="value"></span>
-          </div>
-        </div>
-      </section>
-
-      <!-- Connects -->
-      <section class="section">
-        <h2 class="section-title">Connects</h2>
-        <div class="grid">
-          <div class="metric">
-            <span class="label">Required</span>
-            <span id="connects-required" class="value"></span>
-          </div>
-          <div class="metric">
-            <span class="label">Available</span>
-            <span id="connects-available" class="value"></span>
-          </div>
-        </div>
-      </section>
-
-      <!-- Skills -->
-      <section class="section">
-        <h2 class="section-title">Skills</h2>
-        <div id="skills" class="skills"></div>
-      </section>
-
-      <!-- Client Info -->
-      <section class="section">
-        <h2 class="section-title">Client Info</h2>
-        <div class="grid">
-          <div class="metric">
-            <span class="label">Payment</span>
-            <span id="client-payment" class="value"></span>
-          </div>
-          <div class="metric">
-            <span class="label">Location</span>
-            <span id="client-location" class="value"></span>
-          </div>
-          <div class="metric">
-            <span class="label">Hire Rate</span>
-            <span id="client-hire-rate" class="value"></span>
-          </div>
-          <div class="metric">
-            <span class="label">Open Jobs</span>
-            <span id="client-open-jobs" class="value"></span>
-          </div>
-          <div class="metric">
-            <span class="label">Total Spent</span>
-            <span id="client-total-spent" class="value"></span>
-          </div>
-          <div class="metric">
-            <span class="label">Member Since</span>
-            <span id="client-member-since" class="value"></span>
-          </div>
-          <div class="metric">
-            <span class="label">Rating</span>
-            <span id="client-rating" class="value"></span>
-          </div>
-          <div class="metric">
-            <span class="label">Reviews</span>
-            <span id="client-reviews" class="value"></span>
-          </div>
-        </div>
-      </section>
-
-      <!-- Description -->
-      <section class="section">
-        <h2 class="section-title">Description</h2>
-        <div id="description" class="description"></div>
-      </section>
-
-      <!-- Actions -->
-      <div class="actions">
-        <button id="copy-all" class="btn btn-primary">Copy All</button>
-        <button id="copy-claude" class="btn btn-accent">Copy Claude</button>
-        <button id="save-supabase" class="btn btn-supabase hidden">Save</button>
+        <details class="debug-block">
+          <summary>Debug info</summary>
+          <pre id="capture-debug" class="debug-pre"></pre>
+          <button id="capture-debug-copy" class="btn btn-secondary btn-sm">Copy Debug</button>
+        </details>
       </div>
     </div>
+
+    <!-- App-wide debug / audit log -->
+    <section id="app-debug-panel" class="section hidden" style="margin-top:12px">
+      <h2 class="section-title">App debug — audit log</h2>
+      <p id="app-debug-status" class="batch-status"></p>
+      <div class="capture-image-wrap" style="margin-bottom:8px">
+        <img id="app-debug-image" class="capture-image" alt="page screenshot" style="display:none">
+      </div>
+      <pre id="app-debug" class="debug-pre"></pre>
+      <div class="actions" style="margin-top:8px">
+        <button id="app-debug-copy-all" class="btn btn-accent btn-sm">Copy Image + Debug</button>
+        <button id="app-debug-copy" class="btn btn-secondary btn-sm">Copy Debug</button>
+        <button id="app-debug-capture" class="btn btn-secondary btn-sm" title="Attach current page screenshot + snapshot to the audit log">Capture Now</button>
+        <button id="app-debug-clear" class="btn btn-secondary btn-sm">Clear</button>
+        <button id="app-debug-close" class="btn btn-secondary btn-sm">Hide</button>
+      </div>
+    </section>
 
     <!-- Toast -->
     <div id="toast" class="toast hidden">Copied!</div>
