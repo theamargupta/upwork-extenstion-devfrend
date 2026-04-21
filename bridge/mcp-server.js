@@ -132,6 +132,23 @@ const TOOLS = [
     inputSchema: { type: 'object', properties: {} }
   },
   {
+    name: 'upwork_apply_to_job',
+    description:
+      'High-level: navigate to /nx/proposals/job/~<id>/apply/, hard-stop on qualification warning, fill cover letter, set rate-increase, pick N portfolio + M certs, leave boost untouched. NEVER clicks Send. Use this instead of orchestrating click/fill/query yourself — agent stays in brain mode, extension handles the deterministic DOM dance.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        jobId: { type: 'string', description: 'Upwork job id, e.g. "~022046167505190936654" (with or without leading ~)' },
+        coverLetter: { type: 'string', description: 'Pre-drafted cover letter text. Audit it via the cover-letter self-check BEFORE calling this tool.' },
+        rateIncrease: { type: 'string', description: 'Dropdown option to pick (default "Never"). Pass null/empty to skip.', default: 'Never' },
+        portfolioCount: { type: 'number', description: 'How many portfolio items to highlight (default 2)', default: 2 },
+        certCount: { type: 'number', description: 'How many certificates to highlight (default 2)', default: 2 },
+        skipBoost: { type: 'boolean', description: 'Default true — never burn extra Connects on boost', default: true }
+      },
+      required: ['jobId', 'coverLetter']
+    }
+  },
+  {
     name: 'upwork_done',
     description:
       'Signal that the goal is achieved (or can go no further safely). Provide a short summary. After calling this, stop.',
@@ -186,6 +203,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             { type: 'image', data: base64, mimeType: 'image/png' }
           ]
         };
+      }
+      case 'upwork_apply_to_job': {
+        const res = await runCommand('apply_to_job', args);
+        return textResult(res);
       }
       case 'upwork_done': {
         return textResult({ ok: true, summary: args.summary || '' });

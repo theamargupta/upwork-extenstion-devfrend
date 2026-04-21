@@ -1023,6 +1023,288 @@ ${compactText}`;
       return results[0]?.result || null;
     }
 
+    if (type === 'apply_to_job') {
+      const {
+        jobId,
+        coverLetter,
+        rateIncrease = 'Never',
+        portfolioCount = 2,
+        certCount = 2,
+        skipBoost = true
+      } = args;
+      if (!jobId || typeof jobId !== 'string') throw new Error('apply_to_job: missing jobId');
+      if (!coverLetter || typeof coverLetter !== 'string') throw new Error('apply_to_job: missing coverLetter');
+
+      const cleanId = jobId.startsWith('~') ? jobId : `~${jobId}`;
+      const applyUrl = `https://www.upwork.com/nx/proposals/job/${cleanId}/apply/`;
+
+      // Navigate to apply page (popup-context call). chrome.scripting cannot drive cross-origin nav.
+      await chrome.tabs.update(tab.id, { url: applyUrl });
+      // Wait for tab load complete
+      await new Promise((resolve) => {
+        const listener = (tabId, changeInfo) => {
+          if (tabId === tab.id && changeInfo.status === 'complete') {
+            chrome.tabs.onUpdated.removeListener(listener);
+            resolve();
+          }
+        };
+        chrome.tabs.onUpdated.addListener(listener);
+        // Safety timeout
+        setTimeout(() => { chrome.tabs.onUpdated.removeListener(listener); resolve(); }, 15000);
+      });
+
+      // Run the entire apply orchestration in ONE page-context script.
+      const results = await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: async (params) => {
+          const { coverLetter, rateIncrease, portfolioCount, certCount, skipBoost } = params;
+
+          // ---- Selectors (centralized — protected by selector-fallback-reviewer) ----
+          const SEL = {
+            coverLetter: 'textarea[aria-labelledby="cover_letter_label"]',
+            warningBanner: '.air3-alert-warning, [class*="alert-warning"], [class*="unmet-criteria"]',
+            warningKeywords: /preferred qualifications|do not meet/i,
+            connectsCount: /This proposal requires (\d+) Connects/i,
+            rateDropdownToggle: '[aria-label="How often do you want a rate increase?"] .air3-dropdown-toggle',
+            rateMenuItem: 'li.air3-menu-item',
+            highlightsTrigger: '[data-test="portfolio"]',
+            highlightsModal: '.air3-modal-highlights-editor[role="dialog"], [role="dialog"]',
+            portfolioPanel: '#portfolio',
+            certPanel: '#certifications',
+            certTabBtn: 'button.air3-tab-btn[data-ev-label="certifications"]',
+            itemToggle: 'button.item-add[data-ev-label="profile_highlights_editor_btn_add"]',
+            highlightsItemTitle: '.item-title',
+            commitButton: 'button',
+            commitButtonText: /^Add to highlights$/i
+          };
+
+          // ---- Helpers ----
+          const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+          async function waitFor(check, { timeout = 5000, interval = 100 } = {}) {
+            const deadline = Date.now() + timeout;
+            while (Date.now() < deadline) {
+              const v = check();
+              if (v) return v;
+              await sleep(interval);
+            }
+            return null;
+          }
+
+          function visible(el) {
+            if (!el) return false;
+            const r = el.getBoundingClientRect();
+            return r.width > 0 && r.height > 0;
+          }
+
+          function visibleQueryAll(sel, root = document) {
+            return Array.from(root.querySelectorAll(sel)).filter(visible);
+          }
+
+          function fillTextareaReactSafe(el, value) {
+            const setter = Object.getOwnPropertyDescriptor(el.__proto__, 'value').set;
+            setter.call(el, value);
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+          }
+
+          function clickByText(selector, regex, root = document) {
+            const all = visibleQueryAll(selector, root);
+            const el = all.find((e) => regex.test((e.innerText || e.textContent || '').trim()));
+            if (el) { el.click(); return el; }
+            return null;
+          }
+
+          function readBodyText(maxLen = 8000) {
+            return (document.body.innerText || '').replace(/\s+/g, ' ').trim().slice(0, maxLen);
+          }
+
+          function snapshot() {
+            return { url: location.href, title: document.title };
+          }
+
+          // ---- 1. Confirm we're on the apply page ----
+          if (!location.pathname.includes('/proposals/job/') || !location.pathname.endsWith('/apply/')) {
+            return { ok: false, reason: 'wrong_page', details: `URL is ${location.href}, expected /nx/proposals/job/.../apply/`, ...snapshot() };
+          }
+
+          // ---- 2. Wait for cover letter textarea (proxy for page ready) ----
+          const textarea = await waitFor(() => document.querySelector(SEL.coverLetter), { timeout: 10000 });
+          if (!textarea) return { ok: false, reason: 'apply_page_not_ready', details: 'cover letter textarea did not appear within 10s', ...snapshot() };
+
+          // ---- 3. HARD STOP on qualification warning ----
+          const bodyText = readBodyText();
+          const warningEl = visibleQueryAll(SEL.warningBanner).find((e) => SEL.warningKeywords.test(e.innerText || ''));
+          const warningInBody = SEL.warningKeywords.test(bodyText) && /Earnings|Hours billed|Job success|English|country/i.test(bodyText);
+          if (warningEl || warningInBody) {
+            const msg = (warningEl?.innerText || bodyText.match(/preferred qualifications[^.]*\./i)?.[0] || 'preferred qualifications mismatch').slice(0, 300);
+            return { ok: false, reason: 'qualification_warning', details: msg.replace(/\s+/g, ' ').trim(), ...snapshot() };
+          }
+
+          // ---- 4. Capture Connects cost ----
+          const connectsMatch = bodyText.match(SEL.connectsCount);
+          const connectsCost = connectsMatch ? Number(connectsMatch[1]) : null;
+
+          // ---- 5. Fill cover letter ----
+          fillTextareaReactSafe(textarea, coverLetter);
+          await sleep(150);
+
+          // ---- 6. Set rate-increase ----
+          let rateIncreaseSet = false;
+          if (rateIncrease) {
+            const toggle = document.querySelector(SEL.rateDropdownToggle);
+            if (toggle) {
+              toggle.click();
+              const optionText = new RegExp(`^${rateIncrease.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}$`, 'i');
+              const opt = await waitFor(() => {
+                const items = visibleQueryAll(SEL.rateMenuItem);
+                return items.find((i) => optionText.test((i.innerText || '').trim()));
+              }, { timeout: 3000 });
+              if (opt) { opt.click(); rateIncreaseSet = true; await sleep(200); }
+            }
+          }
+
+          // ---- 7. Open highlights modal ----
+          const highlightsTrigger = document.querySelector(SEL.highlightsTrigger);
+          if (!highlightsTrigger) return { ok: false, reason: 'highlights_trigger_missing', details: 'could not find Add a portfolio project card', connectsCost, ...snapshot() };
+          highlightsTrigger.click();
+
+          // Wait for the modal to render a "Highlights (N/4)" header — anchors on dialog content, not a fragile #portfolio id.
+          const modal = await waitFor(() => {
+            const m = document.querySelector('[role="dialog"]');
+            if (!m) return null;
+            return /Highlights \(\d\/4\)/i.test(m.innerText || '') ? m : null;
+          }, { timeout: 5000 });
+          if (!modal) return { ok: false, reason: 'modal_failed_to_open', details: 'highlights modal did not render a Highlights (N/4) header within 5s', connectsCost, ...snapshot() };
+
+          // ---- 7b. Modal-scoped helpers ----
+          // Each left-panel card = h5 title + a button.item-add sibling/descendant inside the same card wrapper.
+          const readLeftCards = () => Array.from(modal.querySelectorAll('h5'))
+            .filter(visible)
+            .map((h) => {
+              const card = h.closest('[class*="air3-card"], [class*="item"], li, article, section') || h.parentElement;
+              const btn = card?.querySelector('button.item-add');
+              return { title: (h.innerText || '').replace(/\s+/g, ' ').trim(), card, btn };
+            })
+            .filter((c) => c.card && c.btn && visible(c.btn));
+          const readRightTitles = () => Array.from(modal.querySelectorAll('.item-title'))
+            .filter(visible)
+            .map((e) => (e.innerText || '').replace(/\s+/g, ' ').trim());
+
+          // Toggle the first unselected card (button text = "Select highlight"), verify via right-panel match.
+          async function pickNext() {
+            const before = readRightTitles().length;
+            const cards = readLeftCards();
+            for (const c of cards) {
+              if (!/^select highlight$/i.test((c.btn.innerText || '').trim())) continue;
+              c.btn.click();
+              await sleep(300);
+              const after = readRightTitles();
+              if (after.length <= before) {
+                return { ok: false, title: c.title, reason: 'right_panel_count_not_incremented', right: after };
+              }
+              const last = after[after.length - 1] || '';
+              // Upwork prefixes right-panel title with "N - "; strip before matching a prefix of the card title.
+              const cleanLast = last.replace(/^\d+\s*-\s*/, '');
+              const cardCore = c.title.slice(0, Math.min(20, c.title.length));
+              if (!cleanLast.toLowerCase().includes(cardCore.toLowerCase().slice(0, 12))) {
+                return { ok: false, title: c.title, reason: 'right_panel_title_mismatch', last, right: after };
+              }
+              return { ok: true, title: c.title };
+            }
+            return null; // no more unselected cards on this tab
+          }
+
+          // ---- 8. Pick portfolio items ----
+          const portfolioPicked = [];
+          const portfolioErrors = [];
+          for (let i = 0; i < portfolioCount; i++) {
+            const r = await pickNext();
+            if (!r) break;
+            if (!r.ok) { portfolioErrors.push(r); break; }
+            portfolioPicked.push(r.title.slice(0, 80));
+          }
+
+          // ---- 9. Switch to certificates tab ----
+          const certsPicked = [];
+          const certErrors = [];
+          let certsTabReady = false;
+          if (certCount > 0) {
+            const certTab = modal.querySelector(SEL.certTabBtn) || Array.from(modal.querySelectorAll('button')).find((b) => /^certificates$/i.test((b.innerText || '').trim()));
+            if (certTab) {
+              certTab.click();
+              // Wait for cert cards to render: at least one left-panel card with an unselected "Select highlight" button.
+              certsTabReady = !!(await waitFor(() => {
+                const cards = readLeftCards();
+                return cards.some((c) => /^select highlight$/i.test((c.btn.innerText || '').trim())) ? cards : null;
+              }, { timeout: 3000 }));
+              if (certsTabReady) {
+                for (let i = 0; i < certCount; i++) {
+                  const r = await pickNext();
+                  if (!r) break;
+                  if (!r.ok) { certErrors.push(r); break; }
+                  certsPicked.push(r.title.slice(0, 80));
+                }
+              } else {
+                certErrors.push({ ok: false, reason: 'certs_tab_did_not_render_cards' });
+              }
+            } else {
+              certErrors.push({ ok: false, reason: 'certs_tab_button_not_found' });
+            }
+          }
+
+          // ---- 10. Final right-panel state ----
+          const selectedTitles = readRightTitles().map((t) => t.slice(0, 100));
+
+          // ---- 11. Commit (Add to highlights) — only if we have at least one selection; else cancel the modal ----
+          const totalPicked = portfolioPicked.length + certsPicked.length;
+          if (totalPicked === 0) {
+            // Nothing selected — don't commit an empty modal. Try to cancel it.
+            const cancelBtn = Array.from(modal.querySelectorAll('button')).find((b) => /^cancel$/i.test((b.innerText || '').trim()));
+            cancelBtn?.click();
+            await sleep(200);
+            return {
+              ok: false,
+              reason: 'highlights_all_skipped',
+              details: 'No portfolio or cert items were toggled',
+              connectsCost,
+              coverLetterChars: coverLetter.length,
+              rateIncrease: rateIncreaseSet ? rateIncrease : null,
+              highlights: { portfolio: portfolioPicked, certs: certsPicked, selectedTitles, portfolioErrors, certErrors, certsTabReady },
+              ...snapshot()
+            };
+          }
+          const commitBtn = visibleQueryAll('button').find((b) => SEL.commitButtonText.test((b.innerText || '').trim()));
+          if (!commitBtn) return { ok: false, reason: 'commit_button_missing', details: 'Add to highlights button not found', connectsCost, selectedTitles, ...snapshot() };
+          commitBtn.click();
+          await sleep(400);
+
+          // ---- 12. Boost: leave alone (default 0 Connects). skipBoost=true is the default, no action needed. ----
+
+          // ---- 13. Done ----
+          return {
+            ok: true,
+            connectsCost,
+            coverLetterChars: coverLetter.length,
+            rateIncrease: rateIncreaseSet ? rateIncrease : null,
+            highlights: {
+              portfolio: portfolioPicked,
+              certs: certsPicked,
+              selectedTitles,
+              portfolioErrors: portfolioErrors.length ? portfolioErrors : undefined,
+              certErrors: certErrors.length ? certErrors : undefined,
+              certsTabReady
+            },
+            boostSkipped: skipBoost,
+            summary: 'Apply page filled. NOT submitted — Amar must click Send for Connects.',
+            ...snapshot()
+          };
+        },
+        args: [{ coverLetter, rateIncrease, portfolioCount, certCount, skipBoost }]
+      });
+      return results[0]?.result || { ok: false, reason: 'no_result', details: 'executeScript returned empty' };
+    }
+
     throw new Error(`unknown command type: ${type}`);
   }
 

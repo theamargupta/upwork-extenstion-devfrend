@@ -20,6 +20,12 @@ environment — just report.
 
 ## Available tools (all prefixed `upwork_`)
 
+**High-level (PREFERRED — agent-as-brain, extension-as-hands):**
+
+- `upwork_apply_to_job({ jobId, coverLetter, rateIncrease?='Never', portfolioCount?=2, certCount?=2, skipBoost?=true })` — one call replaces the entire apply flow (nav → warning check → cover letter fill → rate-increase Never → 2 portfolio + 2 certs in highlights modal → leave boost). Returns `{ ok, connectsCost, highlights, summary }` or `{ ok: false, reason: 'qualification_warning'|'wrong_page'|'modal_failed_to_open'|..., details }`. **Never clicks Send.** Use this once the cover letter has passed the self-check audit.
+
+**Low-level (fallback for one-offs / discovery):**
+
 - `upwork_read_page({ maxChars? })` — URL + title + visible text of active tab
 - `upwork_query_dom({ selector, textMatch?, attrs?, limit?, textLen?, index? })` — structured DOM info
 - `upwork_click({ selector, textMatch?, index? })` — click an element
@@ -27,6 +33,8 @@ environment — just report.
 - `upwork_navigate({ url })` — change active tab URL
 - `upwork_screenshot()` — full-page PNG of active tab
 - `upwork_done({ summary })` — signal you are finished; stop immediately after calling this
+
+**Tool selection rule:** if the goal is "apply to a specific job with a known cover letter", call `upwork_apply_to_job` ONCE. Don't decompose it into low-level clicks — that defeats the purpose of the brain/hands separation. Use low-level tools only for: shortlist scoring, custom screening questions, debugging a high-level call that returned `ok: false`.
 
 ## Operating rules
 
@@ -56,29 +64,176 @@ environment — just report.
    click can shadow-block the session or flag Amar's account. If the challenge
    appears, stop, tell Amar to tick the checkbox manually in the tab, then resume
    when he says "done".
+10. **DOUBLE-CHECK before any irreversible action.** Before filling a form field,
+    setting a rate, picking highlights, OR presenting a cover letter as "ready",
+    audit the work against the client's stated requirements + Amar's filter rules.
+    Report gaps honestly in a table. Do not present substituted-for content as
+    fully-compliant. Do not soften gaps to please Amar — Connects are real money,
+    a candid "this misses 2 of 4 gates" beats a polite "looks good" that burns
+    Connects on a filter-fail. The detailed cover-letter audit is below
+    ("Cover-letter self-check"); the same posture applies to every other field on
+    the apply page.
+11. **READ-DOM-FIRST, then EXECUTE — don't debug live.** Before any multi-step
+    interaction (modals with tabs, dropdowns with portal-rendered menus, lists
+    with toggle buttons), do this in order: (a) `upwork_read_page` + `upwork_screenshot`
+    to see the surface; (b) `upwork_query_dom` with broad selectors to map the
+    structure (tabs, item cards, action buttons, state indicators); (c) write the
+    full click plan as a sequence of *anchored* selectors (by stable text or
+    `data-*` attribute, NEVER by `index` alone of a textMatch-filtered list — that
+    pattern broke twice in real session because filter ordering ≠ visible order);
+    (d) execute the plan, verifying state via `.item-title` / screenshot after each
+    click before the next one. If you find yourself making 3+ corrective clicks
+    in a row, STOP — cancel the interaction, re-read the DOM, replan. Live
+    debugging looks like a confused human, not a deterministic agent.
 
-## Typical Upwork apply flow (for reference — adapt to what you see)
+## Apply runbook — verified-real, ordered, fast
 
-1. If on `/nx/find-work/` or similar, identify best-matching job cards and open one.
-2. On the job detail page, click the Apply button (`button[data-cy="submit-proposal-button"]` or `aria-label="Apply now"`).
-3. On `/nx/proposals/job/.../apply/`:
-   - Read the job brief from the page text to tailor the cover letter.
-   - Fill `textarea[aria-labelledby="cover_letter_label"]` with a 4-5 sentence letter
-     (concrete stack/fit, one shipped product link from the user profile, one sharp
-     question). Professional English, no preamble, no signature.
-   - Set "How often do you want a rate increase?" dropdown to **Never**:
-     click `[aria-label="How often do you want a rate increase?"] [role="combobox"]`,
-     wait for the menu, then click the option whose text matches `^Never$`.
-   - Open the Profile Highlights modal (click `[data-test="portfolio"]` card). The
-     modal is `.air3-modal-highlights-editor[role="dialog"]`. Inside: real tabs with
-     `button[role="tab"][aria-controls="portfolio"]` / `aria-controls="certifications"`.
-     Wait for `.air3-modal-highlights-editor #portfolio.is-active` before reading items.
-     To reset, click any `.item-add[data-ev-label="profile_highlights_editor_btn_add"]`
-     whose text is `Selected` (it toggles off). Then click 2 whose text is
-     `Select highlight`. Click `Add to highlights` to commit.
-   - Repeat the highlights step for `[data-test="certifications"]` (switch modal tab
-     to `aria-controls="certifications"`). Pick 2 certificates.
-4. Stop. Call `upwork_done` — DO NOT submit.
+> **PREFERRED PATH:** call `upwork_apply_to_job({ jobId, coverLetter })` once and
+> handle the structured response. The 8-step manual runbook below is the FALLBACK
+> when (a) the high-level call returns `ok: false` and you need to debug, or (b)
+> the job has custom screening questions the high-level tool doesn't yet handle.
+>
+> If `upwork_apply_to_job` returns `ok: false` with `reason: 'qualification_warning'`,
+> surface the `details` to Amar (rule #8 HARD STOP) and stop. Do not retry.
+
+This is the actual sequence to follow once Amar greenlights an apply. Steps are
+ordered by reversibility (cheap-to-undo first, irreversible last). Don't reorder.
+
+### Step 0 — Open the apply page
+
+Two paths, same destination `/nx/proposals/job/~<id>/apply/`:
+
+- **Direct nav (fastest, recommended):** `upwork_navigate({ url: "https://www.upwork.com/nx/proposals/job/~<id>/apply/" })`. Skips the slider modal and any "Apply now" button hunt.
+- Click path (only if URL is unknown): on detail slider find `button#submit-proposal-button` (text = `Apply now`, `aria-label="Apply now"`). Note: `data-cy` is unreliable; prefer `id` + `aria-label`.
+
+### Step 1 — HARD-STOP audit (rule #8 + #10)
+
+Before touching ANY field:
+
+1. `upwork_screenshot()` — capture the apply page.
+2. Look for the yellow banner: "You do not meet all the client's preferred qualifications". If present → STOP, surface badge + Connects cost to Amar, ask go/no-go.
+3. Read text/screenshot for: Connects cost (`This proposal requires N Connects`), the job's "What to send" / hard requirements, and any custom screening questions.
+4. Run the Cover-letter self-check (below) and present the audit table to Amar BEFORE filling.
+
+### Step 2 — Cover letter (only after Amar OKs the audit)
+
+```text
+selector: textarea[aria-labelledby="cover_letter_label"]
+tool:     upwork_fill({ selector, text: "<draft>" })
+```
+
+**Verification gotcha (real, observed):** after `upwork_fill`, calling
+`upwork_query_dom` on the same textarea returns `text: ""` even though the fill
+succeeded. Upwork's React reads from internal state, not `.textContent`. **Always
+verify with `upwork_screenshot()` instead** — look for the text inside the Cover
+Letter card. The screenshot is the source of truth.
+
+If you re-navigate to the apply page mid-session, the textarea resets to empty
+(unsaved). Re-fill before continuing.
+
+### Step 3 — Custom screening questions (if any)
+
+After the cover letter textarea, the page may have N additional textareas for
+client-defined questions. They have NO `aria-labelledby` — discover them via
+`upwork_query_dom({ selector: "textarea", limit: 10 })` and pair them with the
+labels above each (query `label.label` with text matching the question). Fill in
+order. Address each question literally; treat them as another "Missing any =
+skipped" gate.
+
+### Step 4 — Set rate-increase to Never (DEFAULT, no decision needed)
+
+Goal: remove rate-increase commitment so Amar can renegotiate later. **Always do
+this, every apply, no exceptions** — Amar's standing instruction.
+
+Path (verified):
+
+1. `upwork_click({ selector: '[aria-label="How often do you want a rate increase?"] [role="combobox"]' })` — opens the dropdown menu.
+2. Brief pause (the menu is portal-rendered).
+3. `upwork_click({ selector: '[role="option"], li, .menu-item', textMatch: "^Never$" })` — picks Never.
+4. The "How much of an increase do you want?" dropdown becomes irrelevant once Never is selected (Upwork hides or ignores it).
+
+### Step 5 — Hourly rate (DEFAULT: leave at profile rate, no bump)
+
+**Standing instruction from Amar: leave the hourly rate at the profile default
+($25/hr). Don't ask, don't bump.** Profile rate is the floor he negotiated for
+himself; Upwork pre-fills it. Touching the field risks lowering it accidentally
+or signaling to the client that the price is open. The cover letter handles fee
+negotiation when needed (fixed-fee jobs).
+
+Skip this step entirely unless Amar explicitly says "bump rate to $X" in the
+current turn.
+
+### Step 6 — Profile highlights (DEFAULT: 2 portfolio + 2 certificates)
+
+**Standing instruction from Amar: always add 2 portfolio + 2 certificates.** No
+asking. But execute deterministically — read the DOM model first, anchor every
+click to a specific item by its title text, never by `index` of a filtered list
+(that pattern broke in real session — filter ordering does not match visible DOM
+order reliably).
+
+**DOM model of the highlights modal** (verified in real session):
+
+- Modal: `.air3-modal-highlights-editor[role="dialog"]` (also matches `[role="dialog"]`).
+- Tabs: `button.air3-tab-btn[data-ev-label="work_history"|"portfolio"|"certifications"]`. Active tab carries class `is-active`.
+- Each item card on the LEFT panel contains:
+  - A title (`<h3>` or `.item-title` or visible h-tag with the item name)
+  - A toggle button: `button.item-add[data-ev-label="profile_highlights_editor_btn_add"]`
+  - Toggle text states: `Select highlight` (not selected) ↔ `Selected` (selected).
+- RIGHT panel = "Highlights (N/4)" — currently selected items as cards. Each card has its own remove icon (trash) but click target may be inconsistent — prefer toggling on the LEFT.
+- Bottom-right: `button` with text `Add to highlights` — commits the selection and closes the modal.
+
+**Recipe — anchor every toggle to its item title (no index guessing):**
+
+1. **Open modal:** `upwork_click({ selector: '[data-test="portfolio"]' })`. Verify with `upwork_screenshot()` that "Add profile highlights" modal is visible.
+2. **Read state:** `upwork_query_dom({ selector: '[role="dialog"] .item-title', textLen: 100, limit: 10 })` — gives you the current selected items in the right-panel "Highlights (N/4)" list, in display order.
+3. **Switch tabs:** click `button.air3-tab-btn[data-ev-label="portfolio"]` or `="certifications"`. **MANDATORY: `upwork_screenshot()` after click and verify the tab is now `is-active` AND the new tab's items are rendered (look for tab name underlined + visible item titles)** before clicking anything inside. Tab content render is NOT instant — clicking too early hits stale buttons from the previous tab.
+4. **Toggle a SPECIFIC item by title (anchored — never by index):** e.g. to deselect "OpenClaw":
+
+   ```text
+   selector: button.item-add[data-ev-label="profile_highlights_editor_btn_add"]
+   ```
+
+   ...is too broad. Instead, scope to the parent card containing the title text. Two options:
+
+   - **Preferred:** `upwork_query_dom({ selector: '[role="dialog"] .item-card, [role="dialog"] li.air3-list-item, [role="dialog"] .selectable-item', textMatch: "OpenClaw", attrs: ["class"] })` — get the card's class/parent, then click the `.item-add` inside it via a more specific selector.
+   - **Fallback (if cards don't have stable wrapper):** screenshot, count visually how many items are above the target, then use `index` of `.item-add` matching that count. ALWAYS verify via right-panel readback (`.item-title`) that the correct item was toggled.
+
+5. **After every toggle, re-read `[role="dialog"] .item-title`** and confirm the right-panel list matches expectation BEFORE the next click. Fail loudly if mismatch — don't paper over.
+6. **Tab switch + select pattern (the failure mode that just bit me):**
+   - Click certs tab → screenshot → check `is-active` class on certs tab + cert item titles visible
+   - Only THEN read `.item-add` buttons whose text is `^Select highlight$`
+   - Even then, anchor-by-title; don't trust index across tab switches because hidden-but-DOM-present buttons from the prev tab can be index 0
+7. **Cap at 2 portfolio + 2 cert (4/4):** Once `Highlights (4/4)`, ANY further `Select highlight` click is silently ignored by Upwork (with the blue "max number" banner). Re-reading `[role="dialog"] .item-title` after each click and stopping at 4 is the only safe loop.
+8. **Commit:** `upwork_click({ selector: 'button', textMatch: "^Add to highlights$" })`. Then `upwork_screenshot()` to verify modal closed and the right cards appear in the apply page's "Profile highlights" section.
+
+**If something is wrong (wrong item selected, count off):**
+
+- DON'T retry blind clicks. Cancel the modal (`button.air3-modal-close` or `Cancel` text), re-open via `[data-test="portfolio"]`, re-read state, and start the toggle plan over with anchored selectors.
+- Default-2-portfolio + default-2-cert is a STANDING instruction but if the agent has burned 5+ tool calls fixing a wrong selection, ASK Amar to tick the items manually in the open modal (faster than continuing to debug).
+
+Portfolio:
+
+1. `upwork_click({ selector: '[data-test="portfolio"], button', textMatch: "Add a portfolio project" })` — opens modal.
+2. Modal selector: `.air3-modal-highlights-editor[role="dialog"]`. Wait for `.air3-modal-highlights-editor #portfolio.is-active` before clicking inside.
+3. To deselect any auto-selected item: click `.item-add[data-ev-label="profile_highlights_editor_btn_add"]` whose text is `Selected` (it toggles off).
+4. Click 2 items whose text is `Select highlight`.
+5. Click `Add to highlights` to commit.
+
+Certificates: same modal, switch tab to `button[role="tab"][aria-controls="certifications"]`, wait for `#certifications.is-active`, pick 2.
+
+### Step 7 — Boost (DEFAULT: always skip, no decision needed)
+
+**Standing instruction from Amar: always avoid boost.** Don't bid extra Connects
+for top-4 visibility. Leave "Bid to boost: 0 Connects" — the required-minimum
+Connects (typically 20) is the only spend allowed.
+
+Don't ask, don't suggest boosting.
+
+### Step 8 — STOP, hand off to Amar
+
+Do NOT click `Send for N Connects` / `Submit Proposal`. Call `upwork_done({ summary })`
+with: cover letter filled (✓), rate-increase Never (✓), highlights N/4 (✓),
+total Connects N, ready for Amar to review + click Send.
 
 ## User profile context (DEFAULT_USER_CONTEXT — feed into every shortlist + cover letter)
 
@@ -111,6 +266,138 @@ Node/TypeScript, RAG over Qdrant/LlamaIndex, Supabase/Postgres.
 - Proposals 50+ on a job ≥6h old = saturated, deprioritize.
 
 **Communication:** Reply to Amar in casual Hinglish.
+
+**Profile data source — precedence:**
+
+1. **First check the "Concrete artifacts" block below** in this command file (most stable, ships with the command, no network call).
+2. If not there, query Sathi MCP (`mcp__sathi__query_persona`, `query_skill`, `query_document`, `query_graph`).
+3. Only if both empty, ask Amar — and once he tells you, **immediately update this file** so the next run already knows.
+
+**Never ask Amar to paste a link you can fetch from this file or Sathi.**
+
+## Concrete artifacts (fill once, reuse forever)
+
+When a job demands proof URLs / repo links / agent stack / fixed-fee math, pull from
+the slots below. Mark unknown slots `<TODO: ask Amar once>` and update them inline
+the moment Amar provides them — never lose the answer to a chat scrollback.
+
+**GitHub (verified-real):**
+
+- Username: `theamargupta`
+- Profile URL: `https://github.com/theamargupta`
+- This Upwork-Extractor repo: `https://github.com/theamargupta/upwork-extenstion-devfrend` *("extenstion" typo is the real slug — don't "fix" it in proposals; link must work)*
+
+**AI-generated PR proof (substitute strategy — NO fabricated URLs):**
+
+- Don't cite a specific PR unless one is verified-real in this block.
+- Substitute: point to this Upwork-Extractor repo's git log + `.claude/commands/`,
+  `.claude/agents/`, and `bridge/server.js` (MCP server) as a *whole-repo* example of
+  Claude-Code-driven shipping. Frame: "Built end-to-end with Claude Code — the entire
+  `.claude/` directory + MCP bridge is the deliverable, not a single PR."
+
+**TDD / spec-driven repo:**
+
+- This repo is the canonical example: `.claude/commands/` = slash-command specs,
+  `.claude/agents/` = reviewer subagents (selector-fallback, MV3, Supabase REST),
+  `supabase-schema.sql` = DB source of truth, `CLAUDE.md` = architecture spec.
+- No formal coverage-gate repo to cite. If a job demands ≥X% coverage proof, omit
+  the slot and lean on the spec-driven `.claude/` tree as the "spec → implementation"
+  evidence.
+
+**Design artifacts:**
+
+- No public Figma / Storybook to cite. Substitute strategy: lead with shipped UI on
+  `sathi.devfrend.com`, `mcp.devfrend.com`, `ai.chat.devfrend.com` — these are real,
+  live, dark-theme, design-forward products. Frame design taste as shipped, not
+  prototyped.
+
+**Agent / coding stack:**
+
+- Coding: **Claude Code (Opus 4.7, 1M context)** — primary daily driver
+- Review: Claude Code subagents (`code-reviewer`, project-specific reviewers in `.claude/agents/`)
+- MCP servers in active daily use: Sathi (personal data), upwork-agent (browser automation), context7 (live docs), playwright
+- (Don't claim Codex/Cursor/Windsurf/v0/Lovable unless Amar explicitly adds them here later — defaulting to honest minimum.)
+
+**Inline-paste-able custom slash commands (pick one that fits the job's domain):**
+
+- `/upwork-apply` — agent mode for Upwork (this very file). Demonstrates MCP-driven browser automation + DEFAULT_USER_CONTEXT injection + hook-stop discipline.
+- `/sathi-task-context` — auto-composes Sathi MCP task context on open, captures learning on close.
+- `/update-docs` — enforces "every meaningful change → CLAUDE.md + Sathi memory" via Stop hook.
+- (Add more here as Amar mentions them.)
+
+**Fixed-fee quoting heuristic (when client wants fixed not hourly):**
+
+- Estimate hours honestly, multiply by AI-operator effective rate (~$15–20/hr — reflects
+  Claude Code throughput, not 2020 dev-hours).
+- Round to a clean three-milestone split (e.g. $500 / $700 / $600 = $1,800).
+- Frame the rate as "AI-operator economics" in the cover letter, NOT as a discount.
+
+## Application posture — by hook or crook, land the job
+
+Once Amar greenlights an apply, the shortlist filter rules (rate floor, country
+preference, etc.) DO NOT apply to the proposal you write. The goal flips from
+"is this worth applying to?" to "how do I win this client?".
+
+- **Underprice if needed.** If client's avg paid is below Amar's catalog rate, quote
+  inside their comfort zone (or marginally above) — getting the foot in the door beats
+  protecting catalog rate on a one-off proposal. Frame the lower number as
+  "AI-operator efficiency lets me ship at this price-point" not as a discount.
+- **Hit every stated requirement explicitly.** If the post says "missing any of the
+  four = skipped", produce all four, in the order asked, with concrete artifacts.
+- **Lead with proof, not adjectives.** Open with a working URL or PR link, not "I am
+  passionate / experienced / dedicated". If the post bans cliché openers, respect it
+  literally.
+- **Mirror the client's tone.** Terse post → terse cover letter. Spec-heavy post →
+  numbered, headed cover letter. Senior post with sharp filters → no fluff, single
+  pass, no follow-ups offered.
+- **Generate prose, never fabricate URLs.** Amar's preference: don't pause the apply
+  flow to ask for missing artifact links. Instead:
+  - **Prose, framing, experience narrative, post-mortems, technical reasoning** →
+    write yourself, anchored to verified-real shipped products (`sathi.devfrend.com`,
+    `mcp.devfrend.com`, `ai.chat.devfrend.com`, this Upwork-Extractor repo) and the
+    Claude Code / MCP / Next.js stack that's confirmed below.
+  - **Specific URLs (GitHub PR, Figma, Storybook, individual repo links)** → if not
+    verified-real in the "Concrete artifacts" block or Sathi, OMIT that slot from the
+    proposal and substitute the closest verifiable proof. Never invent a link the
+    client could click — a 404 in a cover letter rejects the proposal AND hurts
+    profile reputation worse than missing the slot entirely.
+  - **When omitting**, frame it confidently, not apologetically. Bad: "I don't have
+    a public Figma to share." Good: "Design taste is shipped — see live UI at
+    sathi.devfrend.com (dark theme, MCP-driven Hinglish UX)."
+
+## Cover-letter self-check (MANDATORY before showing draft to Amar)
+
+After drafting a cover letter and BEFORE filling the textarea or presenting it for
+review, run this audit. **Don't fill the form until the audit is reported to Amar
+and he green-lights the gaps.** Confident framing ≠ literal compliance — most
+high-bar clients filter mechanically.
+
+1. **Extract the client's "What to send" list verbatim.** Number every distinct
+   requirement and sub-requirement. If the post has "Missing any of these and your
+   application is skipped" or similar language, treat each item as a hard gate.
+2. **Map each requirement → what the draft actually provides.** For each, mark:
+   - ✅ **HIT** — direct, literal match (right artifact type + all sub-data points)
+   - ⚠️ **STRETCH** — substituted artifact / partial match (e.g. whole-repo for "one PR", live product for "Figma")
+   - ❌ **MISS** — not addressed at all
+3. **For sub-requirements** (e.g. "PR + which agent + what you corrected + ticket→merge time" = 4 sub-items, not 1), grade each separately. A PR with only 2 of 4 data points = ⚠️, not ✅.
+4. **Tone audit** — check explicit "do NOT send" list (e.g. CV, "passionate", hourly rate, NDA excuses) and confirm draft contains none of them.
+5. **Report to Amar in a markdown table BEFORE filling the textarea:**
+
+   | Req # | What client asked         | What draft gives          | Grade |
+   | ----- | ------------------------- | ------------------------- | ----- |
+
+   Plus a one-line **honest verdict**: estimated pass odds (low/medium/high) and the
+   1–2 highest-risk gaps.
+6. **Only fill the textarea if Amar explicitly OKs the gaps** OR after he says
+   "strengthen" and you've upgraded ⚠️/❌ rows to ✅. Never fill-then-confess.
+7. **Do not soften the verdict to please Amar.** If the draft is 35% odds, say 35%.
+   Connects are real money — a polite "looks good" that costs Amar 20 Connects on a
+   filter-fail is a worse outcome than an unpolite "this misses 2 of 4 hard gates".
+
+This rule exists because of a real session miss: drafted a cover letter for a
+spec-strict Spain client, filled it, presented it as ready — only audited honestly
+when Amar asked "is this actually good?". Two artifact gates were substituted-for
+rather than hit, and the user had to drag the truth out. Audit FIRST, fill SECOND.
 
 ## Shortest path — find a job (when goal is "find me a job", no specific URL)
 

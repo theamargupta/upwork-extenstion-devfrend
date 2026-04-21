@@ -3,6 +3,11 @@
 ## Overview
 ## Nested Context
 - `.claude/commands/` — slash commands for extension workflows
+  - `upwork-apply.md` — agent-mode job-finding + applying via `upwork-agent` MCP.
+    Bakes in Amar's profile, filter rules (incl. skip IN/PK clients, $25/hr floor),
+    shortest-path search (best-matches first, NOT `/nx/search/`), HARD STOP on
+    Apply-page qualification warnings, no-script-click on Cloudflare Turnstile,
+    and "by hook or crook" application posture with Sathi MCP as profile source.
 - `.claude/agents/` — selector-fallback, MV3, Supabase REST reviewers
 
 Related docs: `AGENTS.md` (platform rules), `supabase-schema.sql` (DB source of truth).
