@@ -35,7 +35,14 @@
         "https://www.upwork.com/ab/proposals/job/*",
         "https://www.upwork.com/nx/proposals/job/*"
       ],
-      "js": ["content.js"],
+      "js": [
+        "src/shared/selectors.js",
+        "src/content/dom-helpers.js",
+        "src/content/extractors.js",
+        "src/content/scoring.js",
+        "src/content/batch-extractor.js",
+        "src/content/content.js"
+      ],
       "run_at": "document_idle"
     }
   ],
