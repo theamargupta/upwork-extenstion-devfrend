@@ -95,7 +95,11 @@
       highlightCardContainer: '[class*="air3-card"], [class*="item"], li, article, section',
       highlightAddButton: 'button.item-add',
       selectedItemTitle: '.item-title',
-      modalButtons: 'button'
+      modalButtons: 'button',
+      milestoneDescription: 'input[data-test="milestone-description"]',
+      milestoneAmountIdPrefix: 'milestone-amount-',
+      durationDropdownToggle: '[data-test="dropdown-toggle"]',
+      durationMenuItem: 'li.air3-menu-item, li[role="option"]'
     },
     autoApply: {
       applyButton: 'button[data-cy="submit-proposal-button"], a[data-cy="submit-proposal-button"], button[aria-label="Apply now"]',

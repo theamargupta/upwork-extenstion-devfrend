@@ -28,10 +28,13 @@ export async function applyToJob(tab, args = {}) {
     rateIncrease = 'Never',
     portfolioCount = 2,
     certCount = 2,
-    skipBoost = true
+    skipBoost = true,
+    milestones = null,
+    duration = null
   } = args;
   if (!jobId || typeof jobId !== 'string') throw new Error('apply_to_job: missing jobId');
   if (!coverLetter || typeof coverLetter !== 'string') throw new Error('apply_to_job: missing coverLetter');
+  if (milestones != null && !Array.isArray(milestones)) throw new Error('apply_to_job: milestones must be an array of { description, amount } objects');
 
   const cleanId = jobId.startsWith('~') ? jobId : `~${jobId}`;
   const applyUrl = `https://www.upwork.com/nx/proposals/job/${cleanId}/apply/`;
@@ -41,7 +44,16 @@ export async function applyToJob(tab, args = {}) {
   const results = await chrome.scripting.executeScript({
     target: { tabId: tab.id },
     func: applyPageScript,
-    args: [{ coverLetter, rateIncrease, portfolioCount, certCount, skipBoost, selectors: applySelectors() }]
+    args: [{
+      coverLetter,
+      rateIncrease,
+      portfolioCount,
+      certCount,
+      skipBoost,
+      milestones,
+      duration,
+      selectors: applySelectors()
+    }]
   });
   return results[0]?.result || { ok: false, reason: 'no_result', details: 'executeScript returned empty' };
 }

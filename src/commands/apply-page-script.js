@@ -1,5 +1,5 @@
 export async function applyPageScript(params) {
-  const { coverLetter, rateIncrease, portfolioCount, certCount, skipBoost, selectors } = params;
+  const { coverLetter, rateIncrease, portfolioCount, certCount, skipBoost, milestones, duration, selectors } = params;
   const SEL = selectors;
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -23,7 +23,7 @@ export async function applyPageScript(params) {
     return Array.from(root.querySelectorAll(sel)).filter(visible);
   }
 
-  function fillTextareaReactSafe(el, value) {
+  function fillFieldReactSafe(el, value) {
     const setter = Object.getOwnPropertyDescriptor(el.__proto__, 'value').set;
     setter.call(el, value);
     el.dispatchEvent(new Event('input', { bubbles: true }));
@@ -36,6 +36,59 @@ export async function applyPageScript(params) {
 
   function snapshot() {
     return { url: location.href, title: document.title };
+  }
+
+  function findButtonByText(regex, root = document) {
+    return Array.from(root.querySelectorAll('button'))
+      .filter(visible)
+      .find((b) => regex.test((b.innerText || '').trim()));
+  }
+
+  async function fillMilestones(list) {
+    if (!Array.isArray(list) || list.length === 0) {
+      return { ok: false, reason: 'milestones_missing_on_fixed_price', details: 'Fixed-price page detected but no milestones array was provided' };
+    }
+    for (let i = 1; i < list.length; i++) {
+      const addBtn = findButtonByText(/^\+\s*Add milestone$/i);
+      if (!addBtn) return { ok: false, reason: 'add_milestone_button_missing', details: `spawning row ${i + 1}/${list.length}` };
+      addBtn.click();
+      await sleep(300);
+    }
+    const filled = [];
+    for (let i = 0; i < list.length; i++) {
+      const m = list[i];
+      const amountInput = document.getElementById(`${SEL.milestoneAmountIdPrefix}${i + 1}`);
+      const descInput = document.querySelector(`input[aria-label="Description ${i + 1}"]`)
+        || document.querySelectorAll(SEL.milestoneDescription)[i];
+      if (!amountInput || !descInput) {
+        return { ok: false, reason: 'milestone_inputs_missing_after_spawn', details: `row ${i + 1}: amount=${!!amountInput}, desc=${!!descInput}` };
+      }
+      fillFieldReactSafe(amountInput, String(m.amount ?? ''));
+      fillFieldReactSafe(descInput, m.description || '');
+      filled.push({ description: (m.description || '').slice(0, 80), amount: Number(m.amount) || 0 });
+    }
+    await sleep(200);
+    const total = filled.reduce((s, m) => s + m.amount, 0);
+    return { ok: true, count: filled.length, total, filled };
+  }
+
+  async function setDuration(durationText) {
+    if (!durationText) return { ok: false, reason: 'duration_not_provided' };
+    const toggle = visibleQueryAll(SEL.durationDropdownToggle)
+      .find((t) => /select a duration/i.test((t.innerText || '').trim()))
+      || visibleQueryAll(SEL.durationDropdownToggle)[0];
+    if (!toggle) return { ok: false, reason: 'duration_dropdown_missing' };
+    toggle.click();
+    await sleep(200);
+    const safeDur = durationText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const optionRegex = new RegExp(`^${safeDur}$`, 'i');
+    const option = await waitFor(() => {
+      return visibleQueryAll(SEL.durationMenuItem).find((li) => optionRegex.test((li.innerText || '').trim()));
+    }, { timeout: 3000 });
+    if (!option) return { ok: false, reason: 'duration_option_not_found', details: `option "${durationText}" not in dropdown` };
+    option.click();
+    await sleep(200);
+    return { ok: true, duration: durationText };
   }
 
   if (!location.pathname.includes('/proposals/job/') || !location.pathname.endsWith('/apply/')) {
@@ -54,13 +107,29 @@ export async function applyPageScript(params) {
     return { ok: false, reason: 'qualification_warning', details: msg.replace(/\s+/g, ' ').trim(), ...snapshot() };
   }
 
+  const pageType = document.querySelector(SEL.milestoneDescription) ? 'fixed-price' : 'hourly';
+
   const connectsMatch = bodyText.match(/This proposal requires (\d+) Connects/i);
   const connectsCost = connectsMatch ? Number(connectsMatch[1]) : null;
-  fillTextareaReactSafe(textarea, coverLetter);
+  fillFieldReactSafe(textarea, coverLetter);
   await sleep(150);
 
+  let milestonesResult = null;
+  let durationResult = null;
   let rateIncreaseSet = false;
-  if (rateIncrease) {
+
+  if (pageType === 'fixed-price') {
+    milestonesResult = await fillMilestones(milestones);
+    if (!milestonesResult.ok) {
+      return { ok: false, reason: milestonesResult.reason, details: milestonesResult.details, pageType, connectsCost, ...snapshot() };
+    }
+    if (duration) {
+      durationResult = await setDuration(duration);
+      if (!durationResult.ok) {
+        return { ok: false, reason: durationResult.reason, details: durationResult.details, pageType, connectsCost, milestones: milestonesResult, ...snapshot() };
+      }
+    }
+  } else if (rateIncrease) {
     const toggle = document.querySelector(SEL.rateDropdownToggle);
     if (toggle) {
       toggle.click();
@@ -74,8 +143,12 @@ export async function applyPageScript(params) {
     }
   }
 
-  const highlightsTrigger = document.querySelector(SEL.highlightsTrigger);
-  if (!highlightsTrigger) return { ok: false, reason: 'highlights_trigger_missing', details: 'could not find Add a portfolio project card', connectsCost, ...snapshot() };
+  const highlightsTrigger = document.querySelector(SEL.highlightsTrigger)
+    || visibleQueryAll('[class*="card"], [class*="button"], button, div[role="button"], div').find((el) => {
+      const t = (el.innerText || '').trim();
+      return /^Add a portfolio project$/i.test(t) && el.getBoundingClientRect().height < 200;
+    });
+  if (!highlightsTrigger) return { ok: false, reason: 'highlights_trigger_missing', details: 'neither [data-test="portfolio"] nor "Add a portfolio project" card found', pageType, connectsCost, milestones: milestonesResult, duration: durationResult, ...snapshot() };
   highlightsTrigger.click();
 
   const modal = await waitFor(() => {
@@ -83,7 +156,7 @@ export async function applyPageScript(params) {
     if (!m) return null;
     return /Highlights \(\d\/4\)/i.test(m.innerText || '') ? m : null;
   }, { timeout: 5000 });
-  if (!modal) return { ok: false, reason: 'modal_failed_to_open', details: 'highlights modal did not render a Highlights (N/4) header within 5s', connectsCost, ...snapshot() };
+  if (!modal) return { ok: false, reason: 'modal_failed_to_open', details: 'highlights modal did not render a Highlights (N/4) header within 5s', pageType, connectsCost, milestones: milestonesResult, duration: durationResult, ...snapshot() };
 
   const readLeftCards = () => Array.from(modal.querySelectorAll(SEL.highlightHeaders))
     .filter(visible)
@@ -159,13 +232,32 @@ export async function applyPageScript(params) {
     const cancelBtn = Array.from(modal.querySelectorAll(SEL.modalButtons)).find((b) => /^cancel$/i.test((b.innerText || '').trim()));
     cancelBtn?.click();
     await sleep(200);
-    return { ok: false, reason: 'highlights_all_skipped', details: 'No portfolio or cert items were toggled', connectsCost, coverLetterChars: coverLetter.length, rateIncrease: rateIncreaseSet ? rateIncrease : null, highlights: { portfolio: portfolioPicked, certs: certsPicked, selectedTitles, portfolioErrors, certErrors, certsTabReady }, ...snapshot() };
+    return { ok: false, reason: 'highlights_all_skipped', details: 'No portfolio or cert items were toggled', pageType, connectsCost, coverLetterChars: coverLetter.length, rateIncrease: rateIncreaseSet ? rateIncrease : null, milestones: milestonesResult, duration: durationResult, highlights: { portfolio: portfolioPicked, certs: certsPicked, selectedTitles, portfolioErrors, certErrors, certsTabReady }, ...snapshot() };
   }
 
   const commitBtn = visibleQueryAll(SEL.modalButtons).find((b) => /^Add to highlights$/i.test((b.innerText || '').trim()));
-  if (!commitBtn) return { ok: false, reason: 'commit_button_missing', details: 'Add to highlights button not found', connectsCost, selectedTitles, ...snapshot() };
+  if (!commitBtn) return { ok: false, reason: 'commit_button_missing', details: 'Add to highlights button not found', pageType, connectsCost, selectedTitles, milestones: milestonesResult, duration: durationResult, ...snapshot() };
   commitBtn.click();
   await sleep(400);
 
-  return { ok: true, connectsCost, coverLetterChars: coverLetter.length, rateIncrease: rateIncreaseSet ? rateIncrease : null, highlights: { portfolio: portfolioPicked, certs: certsPicked, selectedTitles, portfolioErrors: portfolioErrors.length ? portfolioErrors : undefined, certErrors: certErrors.length ? certErrors : undefined, certsTabReady }, boostSkipped: skipBoost, summary: 'Apply page filled. NOT submitted — Amar must click Send for Connects.', ...snapshot() };
+  return {
+    ok: true,
+    pageType,
+    connectsCost,
+    coverLetterChars: coverLetter.length,
+    rateIncrease: rateIncreaseSet ? rateIncrease : null,
+    milestones: milestonesResult,
+    duration: durationResult,
+    highlights: {
+      portfolio: portfolioPicked,
+      certs: certsPicked,
+      selectedTitles,
+      portfolioErrors: portfolioErrors.length ? portfolioErrors : undefined,
+      certErrors: certErrors.length ? certErrors : undefined,
+      certsTabReady
+    },
+    boostSkipped: skipBoost,
+    summary: `Apply page filled (${pageType}). NOT submitted — Amar must click Send for Connects.`,
+    ...snapshot()
+  };
 }
