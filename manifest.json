@@ -33,7 +33,9 @@
         "https://www.upwork.com/nx/find-work/*",
         "https://www.upwork.com/nx/search/jobs/*",
         "https://www.upwork.com/ab/proposals/job/*",
-        "https://www.upwork.com/nx/proposals/job/*"
+        "https://www.upwork.com/nx/proposals/job/*",
+        "https://www.producthunt.com/*",
+        "https://www.producthunt.com/my/details/edit"
       ],
       "js": [
         "src/shared/selectors.js",
